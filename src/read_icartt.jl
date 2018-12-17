@@ -3,7 +3,9 @@ module ReadICARTT
 import DataStructures: OrderedDict;
 using Dates;
 using Unitful;
+
 using ..ICARTTUnits;
+using ..ICARTTExceptions: ICARTTParsingException, ICARTTNotImplementedException;
 
 export read_icartt_file;
 
@@ -12,26 +14,6 @@ export read_icartt_file;
 ##############
 
 _no_default(name) = error("$name is a required argument");
-
-"""
-    ICARTTParsingException(msg)
-
-An exception class raised if any issues arise while parsing an ICARTT-formatted
-file.
-"""
-struct ICARTTParsingException <: Exception
-    msg;
-end
-
-"""
-    ICARTTNotImplementedException(msg)
-
-An exception raised if a particular case is recognized, but not implemented, by
-the parser.
-"""
-struct ICARTTNotImplementedException <: Exception
-    msg;
-end
 
 """
     _HeaderField(fields, readfxn)
@@ -170,7 +152,9 @@ _ICARTT_NORMAL_COMMENTS = ("PI_CONTACT_INFO", "PLATFORM", "LOCATION", "ASSOCIATE
     read_icartt_file(filename::String)
 
 Reads data files formatted to the ICARTT standard defined at
-https://www-air.larc.nasa.gov/missions/etc/IcarttDataFormat.htm.
+https://www-air.larc.nasa.gov/missions/etc/IcarttDataFormat.htm
+and
+https://cdn.earthdata.nasa.gov/conduit/upload/6158/ESDS-RFC-029v2.pdf
 Returns an `AirMerge` structure containing the ICARTT metadata and data.
 
 `verbose` controls the level of printing to the console, for debugging purposes.
@@ -470,6 +454,11 @@ function _parse_normal_comments(io, n_line)
     # start their line and be followed immedately by a colon. After the line
     # that indicates the number of normal comments to read, we start searching
     # for this pattern.
+    #
+    # Note that section 2.3.2.17 of https://cdn.earthdata.nasa.gov/conduit/upload/6158/ESDS-RFC-029v2.pdf
+    # indicates that the normal comments section may include a free form text
+    # section that is not currently implemented by this reader. This section may
+    # include both unformatted text and custom keyword-value pairs.
     current_cmt = nothing;
     categories = join(_ICARTT_NORMAL_COMMENTS, "|");
     re = Regex("^($categories)(?=:)");
