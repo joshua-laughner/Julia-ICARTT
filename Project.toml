@@ -1,0 +1,10 @@
+name = "ICARTT"
+uuid = "67eb10b6-f754-11e8-0fcc-251a474846b2"
+authors = ["Joshua Laughner <jlaugh@caltech.edu>"]
+version = "0.1.0"
+
+[deps]
+DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+NetCDF = "30363a11-5582-574a-97bb-aa9a979735b9"
+Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
