@@ -18,4 +18,11 @@ the parser.
 """
 @msgexc ICARTTNotImplementedException
 
+"""
+    ICARTTUnitsException(msg)
+
+An exception raised if there is a problem interpreting a unit in an ICARTT file.
+"""
+@msgexc ICARTTUnitsException
+
 end

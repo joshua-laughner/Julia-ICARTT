@@ -2,11 +2,7 @@ module ICARTTUnits
 
 using Unitful;
 
-# Custom Exceptions #
-
-struct ICARTTUnitsException <: Exception
-    msg;
-end
+using ..ICARTTExceptions: ICARTTUnitsException;
 
 # The unit aliases dictionary defines aliases for existing Unitful units that
 # might be written differently in ICARTT files. The key should be the Unitful
@@ -57,12 +53,20 @@ function __init__()
     merge!(unit_aliases, _read_alias_config(joinpath(@__DIR__, "common_data", "standard_unit_aliases.txt")));
 end
 
+function list_default_unit_aliases()
+    for (key,val) in unit_aliases
+        println("\"$key\" will be substituted for: \"$(join(val, "\", \""))\"");
+    end
+end
+
 """
-    parse_unit_string(ustr)
+    parse_unit_string(ustr; aliases_dict=nothing)
 
 Given a string describing a unit or combination of units, convert it into a
 Unitful.Units instance. This uses `sanitize_raw_unit_strings` to preformat the
 string into a format that Unitful is more likely to understand.
+
+`aliases_dict` is passed through to `sanitize_raw_unit_strings`.
 """
 function parse_unit_string(ustr; aliases_dict=nothing)
     # Since I could not find a version of the Unitful @u_str macro that was a
@@ -198,11 +202,37 @@ function sanitize_raw_unit_strings(ustr::AbstractString, aliases_dict::AbstractD
     return ustr
 end
 
+"""
+    _read_alias_config(config_file; verbose=0)
+
+Read a unit alias configuration file `config_file`. Returns the aliases as a
+dictionary where the key is the string to replace with and the values are arrays
+of strings to replace.
+
+`verbose` sets the level of logging, change to > 0 to increase logging or < 0 to
+suppress warning messages.
+
+See `ReadICARTT.read_icartt_file` for information about the formatting of the
+configuration file.
+"""
 function _read_alias_config(config_file; verbose=0)
     alias_dict = Dict{String,Array}();
     return _read_alias_config!(alias_dict, config_file; verbose=verbose);
 end
 
+"""
+    _read_alias_config!(alias_dict, config_file; verbose=0)
+
+Reads the unit alias configuration file, placing the results into `alias_dict`.
+The modified `alias_dict` is also returned. Values in `alias_dict` may be added
+to or overwritten depending on the configuration file.
+
+`verbose` sets the level of logging, change to > 0 to increase logging or < 0 to
+suppress warning messages.
+
+See `ReadICARTT.read_icartt_file` for information about the formatting of the
+configuration file.
+"""
 function _read_alias_config!(alias_dict, config_file; verbose=0)
     # the config file needs to be formatted as
     #  Unitful abbrev: alias1, alias2, ... [:{append,replace}]

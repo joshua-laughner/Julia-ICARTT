@@ -149,7 +149,7 @@ _ICARTT_NORMAL_COMMENTS = ("PI_CONTACT_INFO", "PLATFORM", "LOCATION", "ASSOCIATE
 
 
 """
-    read_icartt_file(filename::String)
+    read_icartt_file(filename::String; extra_aliases=nothing, extra_alias_files=nothing, alias_dict_overwrite=false, no_default_aliases=false, verbose=0)
 
 Reads data files formatted to the ICARTT standard defined at
 https://www-air.larc.nasa.gov/missions/etc/IcarttDataFormat.htm
@@ -159,10 +159,121 @@ Returns an `AirMerge` structure containing the ICARTT metadata and data.
 
 `verbose` controls the level of printing to the console, for debugging purposes.
 Set to higher numbers to give more information.
+
+The data from the ICARTT file is stored as arrays of Unitful `Quantity`s that
+combine the value and unit from the file. The helps ensure that calculations
+don't miss conversion factors, but requires that the units defined in the ICARTT
+header are written in a way that Unitful can understand. To aid that, the units
+are reformatted by `ICARTTUnits.sanitize_raw_unit_strings()`. One of the steps
+it takes is to replace undefined units with their Unitful equivalent. What units
+it replaces are defined by the alias dictionary, which can be modified by the
+following keyword arguments.
+
+`no_default_aliases` will eliminate the default aliases defined in `ICARTTUnits`.
+
+`extra_aliases`, `extra_alias_files`, and `alias_dict_overwrite` allow you to
+specify additional unit aliases.
+
+An example is when time is given in units of "hours"; Unitful can't understand
+"hours" so we need to replace it with the abbreviation that it does understand,
+"hr". This function has three ways to specify what unit strings should be
+replaced:
+
+1. ICARTT.ICARTTUnits has some built-in aliases. These are stored in the
+   dictionary `ICARTT.ICARTTUnits.unit_aliases`, or can be printed by
+   `ICARTT.ICARTTUnits.list_default_unit_aliases()`. You can modify this
+   dictionary to add new units globally, though this is not the recommended
+   method. The format of the dictionary is the same
+2. Pass as `extra_aliases` a dictionary that defines the desired units as the keys
+   as the strings that should be replaced in arrays as the values. That is the
+   following dict would define replacing "hour" with "hr" and any of "deg", "degs",
+   or "Degs" with "°":
+
+```
+   extra_aliases = Dict("hr" => ["hour"], "°" => ["deg", "degs", "Degs"]);
+```
+
+   Note that the behavior when one of the units defined in the `extra_aliases` is
+   already defined depends on the value of `alias_dict_overwrite`. If it is `false`
+   (default), the definitions in `extra_aliases` are added to any existing definitions.
+   If `true`, then existing definitions are replaced. For example, the default
+   aliases include one to replace "nanometers" with "nm". If
+
+```
+   extra_aliases = Dict("nm" => "nanometres")
+```
+
+   i.e. it uses the British spelling, then with `alias_dict_overwrite = false`,
+   both "nanometers" and "nanometres" will be replaced by "nm". If `alias_dict_overwrite = true`,
+   then *only* "nanometres" will be replaced.
+
+3. Pass names of one or more text files that describe the same mapping as the
+   dictionary as `extra_alias_files`. May pass a single file as a string, or more
+   than one as an array of strings. The format of these files is:
+
+```
+   replace with: to replace[, to replace[, to replace]][: {replace,append}]
+```
+
+   Each line is the same as a key-value pair in the `extra_aliases` dictionary.
+   The standard aliases are defined in such a file, the first few lines are:
+
+
+   °: degs, deg, Degs
+   hr: hour
+   percent: %
+   std_m: std m
+   nm: nanometers
+   : #
+
+
+   This says to replace "degs", "deg", or "Degs" with "°", "hour" with "hr", and so
+   on. Note that "std m" (including the space) gets replaced with "std_m", and "#"
+   with nothing. For both the strings to replace and to replace them with, spaces
+   inside of letters matter, so e.g. in "std m" even though the full string between
+   the colon and comma is " std m", the leading (and if applicable, trailing) spaces
+   are stripped.
+
+   For your text files, the final "append" or "replace" after an optional second
+   colon controls what happens if your file declares aliases for a unit that already
+   had aliases. If your file had a line:
+
+```
+   °: degree, degrees
+```
+
+   then any of "degs", "deg", "Degs", "degree", or "degrees" would be replaced
+   with "°" (the first three from the defaults, the last two from your file). If
+   instead the line was:
+
+```
+   °: degree, degrees : replace
+```
+
+   then *only* "degree" and "degrees" would be replaced with "°". This allows you
+   to override defaults selectively. Note that the order you pass the files in
+   matters. If you had two files:
+
+```
+   # File A.txt:
+   °: degree, degrees : replace
+
+   # File B.txt:
+   °: Deg
+```
+
+   then passing `extra_alias_files=["File A.txt", "File B.txt"]` would mean that
+   "degree", "degrees", and "Deg" would all be replaced by "°", while
+   `extra_alias_files=["File B.txt", "File A.txt"]` means *only* "degree" and
+   "degrees" get replaced by "°" - the replace line in File A wipes out the
+   corresponding line in File B as well as the defaults.
 """
-function read_icartt_file(filename::String; extra_aliases=nothing, extra_alias_files=nothing, verbose=0)
+function read_icartt_file(filename::String; extra_aliases=nothing, extra_alias_files=nothing,
+        alias_dict_overwrite=false, no_default_aliases=false, verbose=0)
     metadata, data = open(filename, "r") do io
-        metadata, variable_info = _read_icartt_metadata(io; extra_aliases=extra_aliases, extra_alias_files=extra_alias_files, verbose=verbose);
+        metadata, variable_info = _read_icartt_metadata(io; extra_aliases=extra_aliases,
+            extra_alias_files=extra_alias_files, alias_dict_overwrite=alias_dict_overwrite,
+            no_default_aliases=no_default_aliases, verbose=verbose);
         data = _read_icartt_data(io, variable_info; verbose=verbose);
         return metadata, data
     end
@@ -170,7 +281,7 @@ function read_icartt_file(filename::String; extra_aliases=nothing, extra_alias_f
 end
 
 """
-    _read_icartt_metadata(io::IO; verbose=0)
+    _read_icartt_metadata(io::IO; extra_aliases=nothing, extra_alias_files=nothing, alias_dict_overwrite=false, no_default_aliases=false, verbose=0)
 
 Given a handle to an open ICARTT file (`io`), reads in the metadata in the header
 of the file and returns it as a dictionary. Note that this assumes that the file
@@ -179,14 +290,17 @@ of the IO cursor has been returned to the start of the file).
 
 `verbose` controls the level of printing to the console, for debugging purposes.
 Set to higher numbers to give more information.
+
+See `read_icartt_file` for a description of `extra_aliases`, `extra_alias_files`,
+and `alias_dict_overwrite`.
 """
-function _read_icartt_metadata(io::IO; extra_aliases=nothing, extra_alias_files=nothing, alias_dict_overwrite=false, verbose=0)
+function _read_icartt_metadata(io::IO; extra_aliases=nothing, extra_alias_files=nothing, alias_dict_overwrite=false, no_default_aliases=false, verbose=0)
     if verbose > 0
         println("Reading metadata")
     end
 
     metadict = OrderedDict{String, Any}();
-    aliases_dict = _setup_unit_aliases(extra_aliases, extra_alias_files; dict_overwrite=alias_dict_overwrite, verbose=verbose);
+    aliases_dict = _setup_unit_aliases(extra_aliases, extra_alias_files; dict_overwrite=alias_dict_overwrite, no_default_aliases=no_default_aliases, verbose=verbose);
 
     # read the first line to get the number of lines in the header and the file format index
     n_header_lines, ffi = _split_icartt_line(readline(io));
@@ -361,10 +475,10 @@ function _split_icartt_array(T, line)
 end
 
 """
-    _setup_unit_aliases(extra_aliases::Nothing, extra_alias_files; dict_overwrite=false, verbose=0)
-    _setup_unit_aliases(extra_aliases::AbstractDict, extra_alias_files::Nothing; dict_overwrite=false, verbose=0)
-    _setup_unit_aliases(extra_aliases::AbstractDict, extra_alias_files::AbstractString; dict_overwrite=false, verbose=0)
-    _setup_unit_aliases(extra_aliases::AbstractDict, extra_alias_files::AbstractArray; dict_overwrite=false, verbose=0)
+    _setup_unit_aliases(extra_aliases::Nothing, extra_alias_files; dict_overwrite=false, no_default_aliases=false, verbose=0)
+    _setup_unit_aliases(extra_aliases::AbstractDict, extra_alias_files::Nothing; dict_overwrite=false, no_default_aliases=false, verbose=0)
+    _setup_unit_aliases(extra_aliases::AbstractDict, extra_alias_files::AbstractString; dict_overwrite=false, no_default_aliases=false, verbose=0)
+    _setup_unit_aliases(extra_aliases::AbstractDict, extra_alias_files::AbstractArray; dict_overwrite=false, no_default_aliases=false, verbose=0)
 
 Combine the standard unit aliases dictionary with additional configuration files
 and/or an additional dictionary. The different methods handle different cases;
@@ -372,9 +486,11 @@ if no extra dictionary is desired, pass `nothing` for `extra_aliases`. If no
 additional alias files desired, pass `nothing` for `extra_alias_files` as well.
 Otherwise, `extra_alias_files` can be a string or array of strings.
 
-
+`dict_overwrite` will cause entries in the `extra_aliases` to override those
+defined in the defaults or the extra files. `no_default_aliases` will omit the
+predefined aliases from the mapping.
 """
-function _setup_unit_aliases(extra_aliases::Nothing, extra_alias_files; dict_overwrite=false, verbose=0)
+function _setup_unit_aliases(extra_aliases::Nothing, extra_alias_files; dict_overwrite=false, no_default_aliases=false, verbose=0)
     return _setup_unit_aliases(Dict{String, Array{AbstractString,1}}(), extra_alias_files; dict_overwrite=dict_overwrite, verbose=verbose);
 end
 
@@ -406,18 +522,24 @@ end
 # julia> isa(Dict{String,Array{String,1}}(), Dict{String,<:AbstractArray{<:AbstractString,1}})
 # true
 
-function _setup_unit_aliases(extra_aliases::AbstractDict{<:AbstractString, <:AbstractArray{<:AbstractString,1}}, extra_alias_files::Nothing; dict_overwrite=false, verbose=0)
+function _setup_unit_aliases(extra_aliases::AbstractDict{<:AbstractString, <:AbstractArray{<:AbstractString,1}}, extra_alias_files::Nothing;
+        dict_overwrite=false, no_default_aliases=false, verbose=0)
     return _setup_unit_aliases(extra_aliases, Array{String,1}(); verbose=verbose);
 end
 
-function _setup_unit_aliases(extra_aliases::AbstractDict{<:AbstractString, <:AbstractArray{<:AbstractString,1}}, extra_alias_files::AbstractString; dict_overwrite=false, verbose=0)
+function _setup_unit_aliases(extra_aliases::AbstractDict{<:AbstractString, <:AbstractArray{<:AbstractString,1}}, extra_alias_files::AbstractString;
+        dict_overwrite=false, no_default_aliases=false, verbose=0)
     return _setup_unit_aliases(extra_aliases, [extra_alias_files]; verbose=verbose);
 end
 
 function _setup_unit_aliases(extra_aliases::AbstractDict{<:AbstractString, <:AbstractArray{<:AbstractString,1}},
                              extra_alias_files::AbstractArray{<:AbstractString,1};
-                             dict_overwrite=false, verbose=0)
-    aliases = copy(ICARTTUnits.unit_aliases);
+                             dict_overwrite=false, no_default_aliases=false, verbose=0)
+    if no_default_aliases
+        aliases = Dict{String, Array{AbstractString,1}}();
+    else
+        aliases = copy(ICARTTUnits.unit_aliases);
+    end
     for f in extra_alias_files
         if verbose > 1
             println("Reading alias file $f...")
@@ -440,14 +562,19 @@ function _setup_unit_aliases(extra_aliases::AbstractDict{<:AbstractString, <:Abs
 end
 
 """
-    _parse_variable_names(io, n_vars, n_lines; verbose=0)
+    _parse_variable_names(io, n_vars, n_lines; aliases_dict=nothing, verbose=0)
 
 Parse the list of variables in the ICARTT header file pointed to by `io`. Assumes
 that the next call to `readline(io)` will return the first line defining a variable.
 `n_vars` must be an integer specifying how many variables there are to read.
 `n_line` is the current line number of the ICARTT file; it will be advanced properly
-and returned with the variables. `verbose` controls the level of printing to the
-console, for debugging purposes. Set to higher numbers to give more information.
+and returned with the variables.
+
+`aliases_dict` is the dictionary that defines what parts of the unit string to
+replace so that Unitful understands the definition.
+
+`verbose` controls the level of printing to the console, for debugging purposes.
+Set to higher numbers to give more information.
 
 Returns:
     1) an array of named tuples with fields "field" and "unit" describing the
@@ -470,12 +597,19 @@ function _parse_variable_names(io::IO, n_vars, n_line; aliases_dict=nothing, ver
 end
 
 """
-    _parse_variable(line)
+    _parse_variable(line, n_line=-1; aliases_dict=nothing)
 
 Given a line read in from an ICARTT file containing a variable name and unit
 separated by a comma, creates a named tuple containing the variable name as a
 string and the unit as a Unitful.Units instance. The fields are named "field" and
 "unit", respectively.
+
+`n_line` is optional, if given, it should specify the line number of the ICARTT
+file that the variable is being read from; it will be included in an error message
+if there is a problem interpreting the variable.
+
+`aliases_dict` is the dictionary that defines what parts of the unit string to
+replace so that Unitful understands the definition.
 """
 function _parse_variable(line, n_line=-1; aliases_dict=nothing)
     name, unit = _split_icartt_line(line);
