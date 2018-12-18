@@ -54,7 +54,7 @@ deps = ["LinearAlgebra", "Markdown"]
 uuid = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
 
 [[JLLUtils]]
-git-tree-sha1 = "e80091fb645bdcab4b734cebee48db2e1bd28907"
+git-tree-sha1 = "3c95e2fef642cf51851122102b3138e11d6314d4"
 repo-rev = "master"
 repo-url = "https://github.com/joshua-laughner/Julia-JLLUtils"
 uuid = "86f608ae-f8f2-11e8-3ed2-938e6edba5df"

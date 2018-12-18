@@ -14,12 +14,7 @@ end
 # that unit may go by in the ICARTT files. It must be a tuple, even if there is
 # only one alias. Note that the aliases will be matched in order of decreasing
 # length, no matter what order they are listed in.
-unit_aliases = Dict{String, Tuple}("°"  => ("degs", "deg", "Degs"),
-                                   "hr"       => ("hour",),
-                                   "percent"  => ("%",),
-                                   "std_m" => ("std m",),  # temporary until I decide how to treat STP volumes
-                                   "nm" => ("nanometers",),  # also a kludge for KORUS
-                                   "" => ("#",))
+const unit_aliases = Dict{String, Array}();
 
 # Treat "unitless" and "none" slightly differently: "unitless" implies that it
 # is a physical quantity that has no dimensionality; while "none" implies that
@@ -57,6 +52,9 @@ const localunits = Unitful.basefactors
 function __init__()
     merge!(Unitful.basefactors, localunits)
     Unitful.register(ICARTTUnits)
+
+    # this part will initialize the units aliases dict
+    merge!(unit_aliases, _read_alias_config(joinpath(@__DIR__, "common_data", "standard_unit_aliases.txt")));
 end
 
 """
@@ -187,6 +185,40 @@ function sanitize_raw_unit_strings(ustr)
 
     #println(" result: '$ustr'")
     return ustr
+end
+
+function _read_alias_config(config_file; verbose=0)
+    return _read_alias_config(config_file, Dict{String, Array}(); verbose=verbose);
+end
+
+function _read_alias_config(config_file, alias_dict; verbose=0)
+    # the config file needs to be formatted as
+    #  Unitful abbrev: alias1, alias2, ... [:{append,replace}]
+    open(config_file, "r") do io
+        for (ln,line) in enumerate(eachline(io))
+            line_chunks = split(line, ":");
+            unit = strip(line_chunks[1]);
+            aliases = [strip(a) for a in split(line_chunks[2], ",")];
+            op_mode = length(line_chunks) > 2 ? lowercase(strip(line_chunks[3])) : "append";
+
+            if op_mode == "replace"
+                if unit in keys(alias_dict) && verbose >= 0
+                    old_aliases = join(alias_dict[unit], ", ");
+                    new_aliases = join(aliases, ", ");
+                    @warn "Replacing existing aliases for unit \"$unit\" ($old_aliases) with
+                     those defined on line $ln of $config_file ($new_aliases)"
+                end
+                alias_dict[unit] = aliases;
+            elseif op_mode == "append"
+                if !(unit in keys(alias_dict))
+                    alias_dict[unit] = aliases;
+                else
+                    append!(alias_dict[unit], aliases);
+                end
+            end
+        end
+    end
+    return alias_dict;
 end
 
 end
