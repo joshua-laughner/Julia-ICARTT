@@ -160,9 +160,9 @@ Returns an `AirMerge` structure containing the ICARTT metadata and data.
 `verbose` controls the level of printing to the console, for debugging purposes.
 Set to higher numbers to give more information.
 """
-function read_icartt_file(filename::String; verbose=0)
+function read_icartt_file(filename::String; extra_aliases=nothing, extra_alias_files=nothing, verbose=0)
     metadata, data = open(filename, "r") do io
-        metadata, variable_info = _read_icartt_metadata(io; verbose=verbose);
+        metadata, variable_info = _read_icartt_metadata(io; extra_aliases=extra_aliases, extra_alias_files=extra_alias_files, verbose=verbose);
         data = _read_icartt_data(io, variable_info; verbose=verbose);
         return metadata, data
     end
@@ -180,11 +180,14 @@ of the IO cursor has been returned to the start of the file).
 `verbose` controls the level of printing to the console, for debugging purposes.
 Set to higher numbers to give more information.
 """
-function _read_icartt_metadata(io::IO; verbose=0)
+function _read_icartt_metadata(io::IO; extra_aliases=nothing, extra_alias_files=nothing, alias_dict_overwrite=false, verbose=0)
     if verbose > 0
         println("Reading metadata")
     end
+
     metadict = OrderedDict{String, Any}();
+    aliases_dict = _setup_unit_aliases(extra_aliases, extra_alias_files; dict_overwrite=alias_dict_overwrite, verbose=verbose);
+
     # read the first line to get the number of lines in the header and the file format index
     n_header_lines, ffi = _split_icartt_line(readline(io));
     n_header_lines = parse(Int64, n_header_lines);
@@ -244,7 +247,7 @@ function _read_icartt_metadata(io::IO; verbose=0)
                 if verbose > 0
                     println("Reading variables");
                 end
-                variables, n_line = _parse_variable_names(io, n_var, n_line; verbose=verbose);
+                variables, n_line = _parse_variable_names(io, n_var, n_line; aliases_dict=aliases_dict, verbose=verbose);
                 bulk_mode = "special_comments";
 
             elseif bulk_mode == "special_comments"
@@ -307,6 +310,7 @@ function _read_icartt_data(io::IO, variable_info; verbose=0)
     if verbose > 0
         println("Reading data.")
     end
+
     table_lines = [_split_icartt_array(Float64, l) for l in readlines(io)];
     n_meas = length(table_lines);
     # setup a dict of the final structs to receive the data
@@ -357,6 +361,85 @@ function _split_icartt_array(T, line)
 end
 
 """
+    _setup_unit_aliases(extra_aliases::Nothing, extra_alias_files; dict_overwrite=false, verbose=0)
+    _setup_unit_aliases(extra_aliases::AbstractDict, extra_alias_files::Nothing; dict_overwrite=false, verbose=0)
+    _setup_unit_aliases(extra_aliases::AbstractDict, extra_alias_files::AbstractString; dict_overwrite=false, verbose=0)
+    _setup_unit_aliases(extra_aliases::AbstractDict, extra_alias_files::AbstractArray; dict_overwrite=false, verbose=0)
+
+Combine the standard unit aliases dictionary with additional configuration files
+and/or an additional dictionary. The different methods handle different cases;
+if no extra dictionary is desired, pass `nothing` for `extra_aliases`. If no
+additional alias files desired, pass `nothing` for `extra_alias_files` as well.
+Otherwise, `extra_alias_files` can be a string or array of strings.
+
+
+"""
+function _setup_unit_aliases(extra_aliases::Nothing, extra_alias_files; dict_overwrite=false, verbose=0)
+    return _setup_unit_aliases(Dict{String, Array{AbstractString,1}}(), extra_alias_files; dict_overwrite=dict_overwrite, verbose=verbose);
+end
+
+# A note on types for future: there is a distinction between specifying a type
+# as in extra_alias_files::AbstractString and the "internal" types of a dict or
+# array. In the former, it seems that Julia's dispatch will match if extra_alias_files
+# is any subtype of AbstractString and there is not a more specific method
+# available. However, in the latter, for e.g. extra_aliases::AbstractDict, that will
+# also match for any subtype of AbstractDict, but if we want to specify the internal
+# types of the dict, then e.g. AbstractDict{AbstractString, AbstractString} will *not*
+# match any subtype of AbstractDict with any subtype of AbstractString for the keys
+# and values; in this case, we must *explicitly* indicate that subtypes are acceptable
+# with the AbstractDict{<:AbstractString,<:AbstractString} notation.
+#
+# This particular case is even messier b/c we want a dict with any type of array
+# containing any type of strings as the values. Consider the following:
+#
+# julia> isa(Dict{String,Array{String,1}}(), Dict{String,<:AbstractArray{String,1}})
+# true
+#
+# julia> isa(Dict{String,Array{String,1}}(), Dict{String,<:AbstractArray{AbstractString,1}})
+# false
+#
+# In the first, the concrete dict has arrays as values, and since arrays are subtypes of
+# AbstractArray *and* have the *exact same type* for their values, the concrete dict
+# is a subtype of the given datatype. In the second though, since the expected type
+# expects some type of array with AbstractStrings, it doesn't match. We must do:
+#
+# julia> isa(Dict{String,Array{String,1}}(), Dict{String,<:AbstractArray{<:AbstractString,1}})
+# true
+
+function _setup_unit_aliases(extra_aliases::AbstractDict{<:AbstractString, <:AbstractArray{<:AbstractString,1}}, extra_alias_files::Nothing; dict_overwrite=false, verbose=0)
+    return _setup_unit_aliases(extra_aliases, Array{String,1}(); verbose=verbose);
+end
+
+function _setup_unit_aliases(extra_aliases::AbstractDict{<:AbstractString, <:AbstractArray{<:AbstractString,1}}, extra_alias_files::AbstractString; dict_overwrite=false, verbose=0)
+    return _setup_unit_aliases(extra_aliases, [extra_alias_files]; verbose=verbose);
+end
+
+function _setup_unit_aliases(extra_aliases::AbstractDict{<:AbstractString, <:AbstractArray{<:AbstractString,1}},
+                             extra_alias_files::AbstractArray{<:AbstractString,1};
+                             dict_overwrite=false, verbose=0)
+    aliases = copy(ICARTTUnits.unit_aliases);
+    for f in extra_alias_files
+        if verbose > 1
+            println("Reading alias file $f...")
+        end
+        ICARTTUnits._read_alias_config!(aliases, f; verbose=verbose);
+    end
+
+    if dict_overwrite
+        merge!(aliases, extra_aliases);
+    else
+        for (key, val) in extra_aliases
+            if key in keys(aliases)
+                append!(aliases[key], val);
+            else
+                aliases[key] = val;
+            end
+        end
+    end
+    return aliases;
+end
+
+"""
     _parse_variable_names(io, n_vars, n_lines; verbose=0)
 
 Parse the list of variables in the ICARTT header file pointed to by `io`. Assumes
@@ -371,7 +454,7 @@ Returns:
 name and unit of the variable. "unit" will be a Unitful.Units instance.
     2) the line number at the end of the variables section of the header.
 """
-function _parse_variable_names(io::IO, n_vars, n_line; verbose=0)
+function _parse_variable_names(io::IO, n_vars, n_line; aliases_dict=nothing, verbose=0)
     # must retain order to be able to match them up with their fill values
     varnames = Array{NamedTuple{(:field, :unit), Tuple{String,Unitful.Units}}, 1}(undef, n_vars)
     for i = 1:n_vars
@@ -381,7 +464,7 @@ function _parse_variable_names(io::IO, n_vars, n_line; verbose=0)
         if verbose > 1
             println("$i: $line");
         end
-        varnames[i] = _parse_variable(line);
+        varnames[i] = _parse_variable(line, n_line; aliases_dict=aliases_dict);
     end
     return varnames, n_line;
 end
@@ -394,16 +477,16 @@ separated by a comma, creates a named tuple containing the variable name as a
 string and the unit as a Unitful.Units instance. The fields are named "field" and
 "unit", respectively.
 """
-function _parse_variable(line)
+function _parse_variable(line, n_line=-1; aliases_dict=nothing)
     name, unit = _split_icartt_line(line);
     punit = nothing;
     try
-        punit = ICARTTUnits.parse_unit_string(unit)
+        punit = ICARTTUnits.parse_unit_string(unit; aliases_dict=aliases_dict)
     catch err
         # Unitful doesn't use a specific error type for unit conversion
         # errors so the best course of action is to print a message explaining
         # what unit failed and rethrow the error
-        println("Problem while converting unit \"$unit\" on line $n_line.")
+        printstyled("Problem while converting unit \"$unit\" on line $n_line:\n"; color=:red)
         rethrow(err)
     end
     return (field=name, unit=punit);

@@ -14,7 +14,7 @@ end
 # that unit may go by in the ICARTT files. It must be a tuple, even if there is
 # only one alias. Note that the aliases will be matched in order of decreasing
 # length, no matter what order they are listed in.
-const unit_aliases = Dict{String, Array}();
+const unit_aliases = Dict{String, AbstractArray{AbstractString,1}}();
 
 # Treat "unitless" and "none" slightly differently: "unitless" implies that it
 # is a physical quantity that has no dimensionality; while "none" implies that
@@ -64,10 +64,14 @@ Given a string describing a unit or combination of units, convert it into a
 Unitful.Units instance. This uses `sanitize_raw_unit_strings` to preformat the
 string into a format that Unitful is more likely to understand.
 """
-function parse_unit_string(ustr)
+function parse_unit_string(ustr; aliases_dict=nothing)
     # Since I could not find a version of the Unitful @u_str macro that was a
     # function, I'm replicating the internals of @u_str here
-    ustr = sanitize_raw_unit_strings(ustr);
+    if aliases_dict == nothing
+        ustr = sanitize_raw_unit_strings(ustr);
+    else
+        ustr = sanitize_raw_unit_strings(ustr, aliases_dict)
+    end
     # The way the @u_str macro works in Unitful is that, given an expression or
     # symbol, tries to replace each symbol (whether standalone or in the expression)
     # with a Units instance. Then the final expression is automatically evaluated
@@ -111,6 +115,7 @@ end
 
 """
     sanitize_raw_unit_strings(ustr)
+    sanitize_raw_unit_strings(ustr, aliases_dict=nothing)
 
 Preprocesses a unit string (`ustr`) read in from ICARTT files into a form that
 can be understood by Unitful. Does several things:
@@ -122,8 +127,14 @@ can be understood by Unitful. Does several things:
     3. Inserts a "^" between units and their exponents; specifically, if a letter
        is followed immediately by a number, +, or -, a "^" is inserted.
 
+The second, two argument form, allows you to specify the dictionary of aliases
+to use.
 """
-function sanitize_raw_unit_strings(ustr)
+function sanitize_raw_unit_strings(ustr::AbstractString)
+    return sanitize_raw_unit_strings(ustr, unit_aliases);
+end
+
+function sanitize_raw_unit_strings(ustr::AbstractString, aliases_dict::AbstractDict)
     #print("Sanitizing '$ustr', ")
     # The first one is the most complicated because we need to look for any of
     # the aliases defined in the unit_aliases dictionary, but they need to match
@@ -150,7 +161,7 @@ function sanitize_raw_unit_strings(ustr)
     # with Unicode encodings. This has to happen first in case we want to treat
     # a string with spaces, e.g. "std m" specially.
     prefixes = "\\A" * join(values(Unitful.prefixdict), "|\\A") * "|\\s" * join(values(Unitful.prefixdict), "|\\s")
-    for (key, val) in pairs(unit_aliases)
+    for (key, val) in pairs(aliases_dict)
         # Force the aliases to be searched in order of decreasing length (longest
         # first); this ensures that if a shorter alias is a subset of a longer one
         # that the entirety of the longer one gets matched. E.g. if searching
@@ -188,10 +199,11 @@ function sanitize_raw_unit_strings(ustr)
 end
 
 function _read_alias_config(config_file; verbose=0)
-    return _read_alias_config(config_file, Dict{String, Array}(); verbose=verbose);
+    alias_dict = Dict{String,Array}();
+    return _read_alias_config!(alias_dict, config_file; verbose=verbose);
 end
 
-function _read_alias_config(config_file, alias_dict; verbose=0)
+function _read_alias_config!(alias_dict, config_file; verbose=0)
     # the config file needs to be formatted as
     #  Unitful abbrev: alias1, alias2, ... [:{append,replace}]
     open(config_file, "r") do io
