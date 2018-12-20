@@ -85,4 +85,16 @@ function _get_lod_values(air_merge::AirMerge)
     return llod_val, ulod_val;
 end
 
+
+function search_icartt_variables(air_merge::AirMerge, pattern::Union(AbstractString, Regex, AbstractChar))
+    matches = Array{AbstractString,1}();
+    for k in keys(air_merge.data)
+        if occursin(pattern, k)
+            push!(matches, k)
+        end
+    end
+
+    return matches;
+end
+
 end
