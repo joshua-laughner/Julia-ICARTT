@@ -37,7 +37,7 @@ could cause `v == f` to return `false` improperly.
 `NaN`s had to be used instead of `missing` because `missing` is currently incompatible
 with `Unitful.Quantity`s.
 """
-function get_merge_data(air_merge::AirMerge, field::String; replace_fills=true, lod_mode="default",  tol=1e-10, reltol=1e-4)
+function get_merge_data(air_merge::AirMerge, field::String; replace_fills=true, no_units=false, lod_mode="default",  tol=1e-10, reltol=1e-4)
     replace_fills::Bool;
     tol::Float64;
     reltol::Float64;
@@ -67,7 +67,11 @@ function get_merge_data(air_merge::AirMerge, field::String; replace_fills=true, 
         values[is_ulod] .= Unitful.Quantity(ulod_val, Unitful.unit(values[1]));
     end
 
-    return values
+    if no_units
+        return _strip_units.(values)
+    else
+        return values
+    end
 end
 
 function _is_within_tol(raw_values, target_val, tol, reltol)
@@ -86,7 +90,7 @@ function _get_lod_values(air_merge::AirMerge)
 end
 
 
-function search_icartt_variables(air_merge::AirMerge, pattern::Union(AbstractString, Regex, AbstractChar))
+function search_icartt_variables(air_merge::AirMerge, pattern::Union{AbstractString, Regex, AbstractChar})
     matches = Array{AbstractString,1}();
     for k in keys(air_merge.data)
         if occursin(pattern, k)
